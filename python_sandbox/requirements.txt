@@ -1,0 +1,15 @@
+Flask
+Werkzeug
+requests
+numpy
+pandas
+scipy
+matplotlib
+seaborn
+scikit-learn
+
+# Prophet for time series forecasting (uses cmdstanpy instead of PyStan for easier builds)
+prophet
+
+# Optional: If you want to ensure faster and more reliable installs
+cmdstanpy>=1.0.0
