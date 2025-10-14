@@ -34,7 +34,9 @@ We welcome contributions! If you'd like to add a custom tool to this repository:
 
 ### Required README Format
 
-Each tool's README must include a tool parameter table at the top with the following format:
+Each tool's README must include:
+
+1. **Tool parameter table** at the top with the following format:
 
 | Field | Value |
 |-------|-------|
@@ -50,6 +52,14 @@ Each tool's README must include a tool parameter table at the top with the follo
 | **Recipients** | The email recipients you want to send to (comma-separated). Always ask the user for this value. |
 | **Subject** | The subject of the email. Automatically infer the subject of the email. |
 | **Body** | The body content of the email |
+
+2. **Contributor section** acknowledging who created the tool:
+
+```markdown
+## Contributors
+
+- [@username](https://github.com/username) - Tool creator
+```
 
 ## Important Disclaimers
 

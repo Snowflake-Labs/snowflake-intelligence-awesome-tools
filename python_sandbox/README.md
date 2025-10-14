@@ -2,6 +2,10 @@
 
 Execute Python code in a secure containerized environment using Snowpark Container Services. This tool allows your Snowflake Intelligence agents to run Python code and return results as JSON.
 
+## Contributors
+
+- [@jeffhollan](https://github.com/jeffhollan) - Tool creator
+
 ## Tool Parameters
 
 | Field | Value |
@@ -91,4 +95,5 @@ Executes Python code and returns results. Supports both Snowflake Service Functi
 - No persistent storage between executions
 - Network access is controlled and limited
 - All executions are logged for audit purposes
+
 

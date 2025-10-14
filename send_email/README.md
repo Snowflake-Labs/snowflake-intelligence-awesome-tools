@@ -2,6 +2,10 @@
 
 Send emails directly from your Snowflake Intelligence agents using Snowflake's email integration.
 
+## Contributors
+
+- [@jeffhollan](https://github.com/jeffhollan) - Tool creator
+
 ## Tool Parameters
 
 | Field | Value |

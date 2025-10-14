@@ -2,6 +2,10 @@
 
 Generate interactive Streamlit applications based on natural language prompts and deploy them directly to your Snowflake environment.
 
+## Contributors
+
+- [@jeffhollan](https://github.com/jeffhollan) - Tool creator
+
 ## Tool Parameters
 
 | Field | Value |
