@@ -28,13 +28,12 @@ CREATE SERVICE python_executor
       endpoints:
       - name: execute
         port: 8080
-        public: true
   $$
   MIN_INSTANCES=1
   MAX_INSTANCES=1;
 
-CREATE FUNCTION execute_python (PythonScript varchar)
-  RETURNS object
+CREATE FUNCTION execute_python (PythonScript varchar, timeout number)
+  RETURNS string
   SERVICE=python_executor
   ENDPOINT=execute
   AS '/execute';

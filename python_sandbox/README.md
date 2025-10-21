@@ -10,7 +10,7 @@ Execute Python code in a secure containerized environment using Snowpark Contain
 
 | Field | Value |
 |-------|-------|
-| **Tool Description** | Use this tool anytime you need to execute Python code or perform data analysis with Python libraries. The following libraries are available: requests, numpy, pandas, scipy, matplotlib, seaborn, scikit-learn, prophet |
+| **Tool Description** | Use this tool anytime you need to execute Python code or perform data analysis with Python libraries. The following libraries are available: requests, numpy, pandas, scipy, matplotlib, seaborn, scikit-learn, prophet. Context is limited to a single execution, so pass in all context and content in as little tool calls as possible. |
 | **Code** | The Python code to execute. Can include imports, data processing, analysis, and any Python operations |
 | **Timeout** | Optional execution timeout in seconds (1-300, defaults to 30 seconds) |
 
