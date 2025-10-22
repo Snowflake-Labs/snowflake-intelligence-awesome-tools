@@ -4,20 +4,6 @@ A collection of open source samples and tools that you can use to enhance your S
 
 ## Available Tools
 
-### 📧 [Scheduled Intelligence Alerts](scheduled_alerts/)
-Subscribe to recurring analyses delivered via email. Users can ask your agent to schedule any question and receive automated insights based on fresh data - daily or weekly.
-
-**Key Features:**
-- Subscribe to analyses via natural language
-- Daily or weekly delivery schedules
-- Beautiful HTML emails with AI-generated insights
-- Parallel processing for scale
-- Full Airflow orchestration
-
-**Use Cases:** Sales teams tracking customer usage, product teams monitoring metrics, executives receiving automated summaries
-
----
-
 ### 📧 [Send Email](send_email/)
 Send emails directly from your Snowflake Intelligence agents using Snowflake's email integration.
 
@@ -30,6 +16,20 @@ Generate Streamlit applications using Snowflake Intelligence.
 
 ### 🐍 [Python Sandbox](python_sandbox/)
 Execute Python code safely in a sandboxed environment.
+
+---
+
+### 📧 [Scheduled Intelligence Alerts](scheduled_alerts/)
+Subscribe to recurring analyses delivered via email. Users can ask your agent to schedule any question and receive automated insights based on fresh data - daily or weekly.
+
+**Key Features:**
+- Subscribe to analyses via natural language
+- Daily or weekly delivery schedules
+- Beautiful HTML emails with AI-generated insights
+- Parallel processing for scale
+- Full Airflow orchestration
+
+**Use Cases:** Sales teams tracking customer usage, product teams monitoring metrics, executives receiving automated summaries
 
 ---
 
