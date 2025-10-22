@@ -18,7 +18,6 @@ import logging
 import os
 import sys
 import traceback
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -26,10 +25,8 @@ from pathlib import Path
 import markdown
 import requests
 import yaml
-from requests.adapters import HTTPAdapter
 from snowflake.snowpark import Session
 from snowflake.snowpark.context import get_active_session
-from urllib3.util.retry import Retry
 
 
 def get_snowflake_session() -> Session:
@@ -64,10 +61,6 @@ PREVIEW_MODE = False
 PREVIEW_EMAIL = "tyler.richards@snowflake.com"
 PREVIEW_MAX_ALERTS = 10
 
-# Concurrency and HTTP pool sizing (hard-coded)
-MAX_WORKERS = 16
-MAX_WORKERS_CAP = 32
-HTTP_POOL_MAX = 64
 
 
 @dataclass
@@ -140,8 +133,8 @@ def run_agent(prompt: str, session: Session) -> str:
         ],
     }
 
-    # Call the agent API with timeout (use pooled session)
-    response = get_http_session().post(
+    # Call the agent API with timeout
+    response = requests.post(
         url, headers=headers, json=request_data, stream=False, timeout=300
     )
 
@@ -167,119 +160,6 @@ def run_agent(prompt: str, session: Session) -> str:
                         continue
 
     return final_text
-
-
-def get_auth_token(session: Session | None) -> str:
-    """Retrieve a Snowflake auth token from known locations.
-
-    Preference order:
-    1) SPCS token file at /snowflake/session/token
-    2) Snowpark session REST token (if provided)
-    """
-    # Try token file first (SPCS runtime)
-    try:
-        return open("/snowflake/session/token", "r").read()
-    except Exception:
-        pass
-
-    # Try from provided session
-    if session is not None:
-        try:
-            if hasattr(session, "conf"):
-                rest_conf = session.conf.get("rest")
-                if hasattr(rest_conf, "token") and rest_conf.token:
-                    return rest_conf.token
-        except Exception:
-            pass
-
-    raise Exception(
-        "Unable to get Snowflake authentication token. Ensure REST token or SPCS token file is available."
-    )
-
-
-def run_agent_with_token(prompt: str, token: str) -> str:
-    """Call PDS_AGENT using Snowflake Intelligence API with a provided token."""
-    database = "SNOWFLAKE_INTELLIGENCE"
-    schema = "AGENTS"
-    agent = "PDS_AGENT"
-    host = os.getenv(
-        "SNOWFLAKE_HOST", "snowhouse.prod1.us-west-2.aws.snowflakecomputing.com"
-    )
-
-    url = f"https://{host}/api/v2/databases/{database}/schemas/{schema}/agents/{agent}:run"
-    headers = {
-        "Authorization": f'Snowflake Token="{token}"',
-        "Content-Type": "application/json",
-    }
-
-    request_data = {
-        "messages": [
-            {
-                "role": "user",
-                "content": [{"type": "text", "text": prompt}],
-            },
-        ],
-    }
-
-    response = get_http_session().post(
-        url, headers=headers, json=request_data, stream=False, timeout=300
-    )
-
-    final_text = ""
-    chunks = response.text.split("\n\n")
-    for chunk in chunks:
-        lines = chunk.strip().split("\n")
-        if len(lines) >= 2:
-            event_line = lines[0]
-            data_line = lines[1]
-            if event_line == "event: response.text":
-                chars_to_strip = "data: "
-                if data_line.startswith(chars_to_strip):
-                    json_data = data_line[len(chars_to_strip) :]
-                    try:
-                        parsed_data = json.loads(json_data)
-                        if "text" in parsed_data:
-                            final_text += parsed_data["text"]
-                    except json.JSONDecodeError:
-                        continue
-
-    return final_text
-
-
-_HTTP_SESSION = None
-
-
-def get_http_session():
-    """Return a configured HTTP session with connection pooling and retries.
-
-    Pool size and behavior can be tuned via env:
-      - ALERTS_HTTP_POOL_MAX (default 64)
-    """
-    global _HTTP_SESSION
-    if _HTTP_SESSION is not None:
-        return _HTTP_SESSION
-
-    session = requests.Session()
-    pool_max = HTTP_POOL_MAX
-
-    retries = Retry(
-        total=3,
-        backoff_factor=0.5,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["POST", "GET"],
-        raise_on_status=False,
-    )
-
-    adapter = HTTPAdapter(
-        pool_connections=pool_max,
-        pool_maxsize=pool_max,
-        max_retries=retries,
-    )
-    session.mount("http://", adapter)
-    session.mount("https://", adapter)
-
-    _HTTP_SESSION = session
-    return _HTTP_SESSION
 
 
 def generate_cortex_prompt(question: str, sql_statement: str) -> str:
@@ -335,8 +215,7 @@ REQUIREMENTS:
 def generate_alert_summary(
     question: str,
     sql_statement: str,
-    session: Session | None = None,
-    token: str | None = None,
+    session: Session,
 ) -> str:
     """Generate AI summary by having the agent run the query and analyze results."""
     logger.info(f"📝 Generating prompt for question: {question[:100]}...")
@@ -344,14 +223,7 @@ def generate_alert_summary(
     logger.info(f"📤 Sending prompt to agent (length: {len(prompt)} chars)...")
 
     try:
-        if token is not None:
-            summary = run_agent_with_token(prompt, token)
-        elif session is not None:
-            summary = run_agent(prompt, session)
-        else:
-            raise ValueError(
-                "Either token or session must be provided to run the agent"
-            )
+        summary = run_agent(prompt, session)
 
         if not summary or not summary.strip():
             raise ValueError("Agent returned empty response")
@@ -615,79 +487,6 @@ def process_alert(
     return result
 
 
-def prepare_alert(
-    alert: ScheduledAlert,
-    token: str,
-    preview_mode: bool,
-    preview_email: str,
-    alert_num: int,
-    total_alerts: int,
-) -> dict:
-    """Prepare alert content by calling the agent and generating HTML.
-
-    Returns a dict with keys: recipient, subject, html_content, result
-    (result contains email, question, success=False (to be set later), error)
-    """
-    logger.info("=" * 80)
-    logger.info(f"🔔 Preparing alert {alert_num}/{total_alerts}")
-    logger.info(f"   User: {alert.user_email}")
-    logger.info(f"   Question: {alert.overall_question}")
-    logger.info("=" * 80)
-
-    result = {
-        "email": alert.user_email,
-        "question": alert.overall_question,
-        "success": False,
-        "error": None,
-    }
-
-    recipient = preview_email if preview_mode else alert.user_email
-    subject = DEFAULT_SUBJECT.format(question=alert.overall_question[:50])
-    if preview_mode:
-        subject = f"[PREVIEW] {subject}"
-
-    try:
-        logger.info("🤖 Starting agent analysis (parallel)...")
-        ai_summary = generate_alert_summary(
-            alert.overall_question, alert.sql_statement, token=token
-        )
-        logger.info("✅ Agent analysis completed successfully (parallel)")
-
-        logger.info("📧 Generating email HTML...")
-        html_content = generate_alert_email(alert, ai_summary, error_message=None)
-
-        return {
-            "recipient": recipient,
-            "subject": subject,
-            "html_content": html_content,
-            "result": result,
-            "alert_num": alert_num,
-            "total_alerts": total_alerts,
-        }
-
-    except Exception as e:
-        error_type = type(e).__name__
-        error_msg = str(e)
-        logger.error(f"❌ Error preparing alert: {error_type}: {error_msg}")
-        traceback.print_exc()
-        result["error"] = f"{error_type}: {error_msg}"
-
-        error_html = generate_alert_email(
-            alert, "", f"Alert processing failed: {error_type}: {error_msg}"
-        )
-
-        return {
-            "recipient": recipient,
-            "subject": f"[PREVIEW] Error: {alert.overall_question[:50]}"
-            if preview_mode
-            else subject,
-            "html_content": error_html,
-            "result": result,
-            "alert_num": alert_num,
-            "total_alerts": total_alerts,
-        }
-
-
 def send_summary_report(session: Session, results: list[dict]) -> None:
     """Send summary report to admins."""
     total_success = sum(1 for r in results if r["success"])
@@ -793,91 +592,19 @@ def process_alerts(
         logger.info("No alerts to process")
         return
 
-    # Attempt to get a token once; if unavailable, fall back to sequential processing
-    token = None
-    try:
-        token = get_auth_token(session)
-        logger.info("🔑 Retrieved auth token; enabling parallel preparation of alerts")
-    except Exception as e:
-        logger.warning(
-            f"⚠️ Could not retrieve standalone auth token, falling back to sequential processing: {e}"
-        )
-
+    # Process alerts sequentially
     results = []
-
-    if token is not None:
-        # Parallelize agent calls and HTML generation; send emails sequentially
-        max_workers = min(MAX_WORKERS, len(all_alerts), MAX_WORKERS_CAP)
-        logger.info(
-            f"🧵 Preparing alerts in parallel with up to {max_workers} workers (cap={MAX_WORKERS_CAP})..."
+    logger.info("🚶 Processing alerts sequentially...")
+    for i, alert in enumerate(all_alerts, 1):
+        result = process_alert(
+            alert,
+            session,
+            preview_mode=preview_mode,
+            preview_email=PREVIEW_EMAIL,
+            alert_num=i,
+            total_alerts=len(all_alerts),
         )
-
-        futures = []
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            for i, alert in enumerate(all_alerts, 1):
-                futures.append(
-                    executor.submit(
-                        prepare_alert,
-                        alert,
-                        token,
-                        preview_mode,
-                        PREVIEW_EMAIL,
-                        i,
-                        len(all_alerts),
-                    )
-                )
-
-            prepared_items = []
-            for future in as_completed(futures):
-                try:
-                    prepared_items.append(future.result())
-                except Exception as e:
-                    logger.error(f"❌ Unexpected error in preparation thread: {e}")
-
-        # Send emails sequentially using the Snowflake session to avoid threading issues
-        for item in prepared_items:
-            recipient = item["recipient"]
-            subject = item["subject"]
-            html_content = item["html_content"]
-            res = item["result"]
-            alert_num = item["alert_num"]
-            total = item["total_alerts"]
-
-            # If there was an error during preparation, do not send to real users
-            if res.get("error") and not preview_mode:
-                logger.error(
-                    f"❌ Skipping send for alert {alert_num}/{total} due to preparation error"
-                )
-                results.append(res)
-                continue
-
-            logger.info(
-                f"📤 Sending email to {recipient} (alert {alert_num}/{total})..."
-            )
-            success = send_alert_email(session, recipient, subject, html_content)
-            res["success"] = success
-            if success:
-                logger.info(f"✅ Alert {alert_num}/{total} email sent successfully")
-            else:
-                logger.error(f"❌ Alert {alert_num}/{total} failed to send email")
-
-            results.append(res)
-
-    else:
-        # Sequential fallback using existing process_alert (safer without token)
-        logger.info(
-            "🚶 Processing alerts sequentially (no token available for parallel mode)"
-        )
-        for i, alert in enumerate(all_alerts, 1):
-            result = process_alert(
-                alert,
-                session,
-                preview_mode=preview_mode,
-                preview_email=PREVIEW_EMAIL,
-                alert_num=i,
-                total_alerts=len(all_alerts),
-            )
-            results.append(result)
+        results.append(result)
 
     # Print summary
     total_success = sum(1 for r in results if r["success"])
