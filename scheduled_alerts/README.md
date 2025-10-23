@@ -2,10 +2,10 @@
 
 Subscribe to recurring analyses delivered via email. Users can ask your agent to schedule any question, and receive automated insights based on fresh data - daily or weekly.
 
-## Contributors
+## What This Tool Does
 
-- [@zachary-blackwood](https://github.com/zachary-blackwood) - Tool creator
-- [@tylerjrichards](https://github.com/tylerjrichards) - Tool creator
+The magic of this tool is not actually in the custom tool itself, but in the scheduled python job that we run via airflow. The custom tool does nothing more than insert a row into a table, the custom python job runs every morning and creates beautiful HTML emails with fresh insights using the Cortex Agent API. 
+
 
 ## Tool Parameters
 
@@ -16,15 +16,9 @@ Subscribe to recurring analyses delivered via email. Users can ask your agent to
 | **overall_question** | The natural language question the user wants to receive updates about. This should be the general question that will be re-run on a schedule. Required. |
 | **frequency** | How often to send the alert. Must be either "Daily" or "Weekly". Always ask the user which frequency they prefer. Required. |
 
-## What This Tool Does
 
-The magic of this tool is not actually in the custom tool itself, but in the scheduled python job that we run via airflow. The custom tool does nothing more than insert a row into a table, the custom python job runs every morning and creates Beautiful HTML emails with fresh insights. 
 
-**Example Use Cases:**
-- Sales teams tracking weekly customer usage patterns
-- Product teams monitoring daily feature adoption metrics
-- DevRel tracking new agent creation trends
-- Executives receiving automated performance summaries
+
 
 ## Architecture Overview
 
@@ -56,7 +50,7 @@ This enables users to subscribe via your agent.
 
 **Step 1: Configure and create the alerts table**
 
-Update the database and schema at the top of `custom_tool.sql` or `schedule_analysis.sql`:
+Update the database and schema at the top of `schedule_analysis.sql`:
 
 ```sql
 -- Update these for your environment
@@ -85,7 +79,7 @@ CREATE OR REPLACE PROCEDURE log_snowflake_intelligence_scheduled_alert(
 )
 RETURNS STRING
 LANGUAGE SQL
-EXECUTE AS CALLER
+EXECUTE AS OWNER
 COMMENT = 'Custom tool for agent to log scheduled alert subscriptions'
 AS
 $$
@@ -166,7 +160,18 @@ Agent: [Uses drop_alerts_by_user]
 
 ### Part 2: Email Procedure Setup
 
-This creates the stored procedure for sending formatted HTML emails.
+You can set up emails however you woud like, Airflow has a built in emailer, so does Snowflake, and there are a dozen great vendors who can help you here too. Snowflake's is good, the only downside is that the user needs to verify their email address and you need to create an email integration. There is no way around these two steps. If you want to use your own emailer, awesome! Just skip to part 3. 
+
+Snowflake has a built-in system for emailing users. See the documentation [here](https://docs.snowflake.com/en/user-guide/notifications/email-notifications), but I will walk you though how to use it below. 
+
+To use this system, you need to:
+1. Make sure that the intended recipients verify their email addresses.
+
+THIS STEP IS VERY IMPORTANT, EMAILS WILL NOT WORK IF YOU DO NOT DO THIS
+
+2. Create a notification integration.
+
+3. Call a stored procedure to send the notification.
 
 **Step 1: Create an email integration (if you don't have one)**
 
@@ -181,7 +186,7 @@ CREATE NOTIFICATION INTEGRATION IF NOT EXISTS EXISTING_EMAIL_INTEGRATION
 Run the SQL from `email_procedure.sql`:
 
 ```sql
-CREATE OR REPLACE PROCEDURE snowscience.streamlit_apps.standalone_email_formatted(
+CREATE OR REPLACE PROCEDURE standalone_email_formatted(
   recipient STRING,
   subject STRING,
   raw_html STRING
@@ -222,7 +227,7 @@ $$;
 **Step 3: Test the email procedure**
 
 ```sql
-CALL snowscience.streamlit_apps.standalone_email_formatted(
+CALL standalone_email_formatted(
     'your.email@company.com',
     'Test Email',
     '<html><body><h1>Hello!</h1><p>This is a test email.</p></body></html>'
@@ -304,9 +309,10 @@ The full implementation is available in this repository:
 
 ## Resources
 
-- **Cortex Agent API**: [Documentation](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agent-api)
-- **Snowflake Intelligence**: [Documentation](https://docs.snowflake.com/en/user-guide/snowflake-intelligence)
+- **Cortex Agents REST API**: [Documentation](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-rest-api)
+- **Snowflake Intelligence**: [Documentation](https://docs.snowflake.com/en/user-guide/snowflake-cortex/snowflake-intelligence)
 - **Email Integration**: [Documentation](https://docs.snowflake.com/en/user-guide/email-stored-procedures)
+
 ---
 
 **Happy scheduling!** 🚀
