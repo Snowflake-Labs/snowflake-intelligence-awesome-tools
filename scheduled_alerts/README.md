@@ -4,8 +4,8 @@ Subscribe to recurring analyses delivered via email. Users can ask your agent to
 
 ## Contributors
 
-- Zachary Blackwood
-- Tyler Richards
+- [@zachary-blackwood](https://github.com/zachary-blackwood) - Tool creator
+- [@tylerjrichards](https://github.com/tylerjrichards) - Tool creator
 
 ## Tool Parameters
 
@@ -32,10 +32,10 @@ The system consists of three main components:
 
 1. **Custom Tool (SQL)**: Stored procedure that captures subscription requests from the agent
 2. **Python Processing Script**: Runs the analyses using Cortex Agent API and generates emails
-3. **Airflow Scheduler**: Orchestrates daily execution at 8am PST
+3. **Scheduler**: Orchestrates daily execution at 8am PST (Airflow, cron, etc.)
 
 ```
-User asks agent → Custom tool stores subscription → Airflow runs daily →
+User asks agent → Custom tool stores subscription → Scheduler runs daily →
 → Python script calls Agent API → Generates insights → Sends email
 ```
 
@@ -43,9 +43,10 @@ User asks agent → Custom tool stores subscription → Airflow runs daily →
 ## Files Included
 
 This directory contains:
-- **`custom_tool.sql`** - SQL script to create the custom tool and table
-- **`snowflake_intelligence_alerts.py`** - Python processing script (example from production)
-- **`snowflake_intelligence_alerts_DAG.py`** - Airflow DAG definition (example from production)
+- **`schedule_analysis.sql`** - SQL script to create the custom tool, table, and alert management tools
+- **`email_procedure.sql`** - SQL script to create the email sending stored procedure
+- **`snowflake_intelligence_alerts.py`** - Python processing script
+- **`snowflake_intelligence_alerts_DAG.py`** - Airflow DAG definition (example)
 
 ## Installation Instructions
 
@@ -53,12 +54,20 @@ This directory contains:
 
 This enables users to subscribe via your agent.
 
-**Step 1: Create the alerts table**
+**Step 1: Configure and create the alerts table**
 
-Make sure to replace the fully qualified table names with one where your roles have access!
+Update the database and schema at the top of `custom_tool.sql` or `schedule_analysis.sql`:
 
 ```sql
-CREATE TABLE IF NOT EXISTS snowscience.streamlit_apps.snowflake_intelligence_scheduled_alerts (
+-- Update these for your environment
+USE DATABASE YOUR_DATABASE;     
+USE SCHEMA YOUR_SCHEMA;          
+```
+
+Then create the table:
+
+```sql
+CREATE TABLE IF NOT EXISTS snowflake_intelligence_scheduled_alerts (
     user_email VARCHAR NOT NULL,
     overall_question VARCHAR NOT NULL,
     alert_frequency VARCHAR NOT NULL DEFAULT 'Daily',
@@ -66,10 +75,10 @@ CREATE TABLE IF NOT EXISTS snowscience.streamlit_apps.snowflake_intelligence_sch
 );
 ```
 
-**Step 2: Create the stored procedure**
+**Step 2: Create the stored procedures**
 
 ```sql
-CREATE OR REPLACE PROCEDURE snowscience.streamlit_apps.log_snowflake_intelligence_scheduled_alert(
+CREATE OR REPLACE PROCEDURE log_snowflake_intelligence_scheduled_alert(
     user_email STRING,
     overall_question STRING,
     alert_frequency STRING
@@ -85,7 +94,7 @@ BEGIN
     RETURN 'ERROR: Frequency must be either Daily or Weekly';
   END IF;
   
-  INSERT INTO snowscience.streamlit_apps.snowflake_intelligence_scheduled_alerts
+  INSERT INTO snowflake_intelligence_scheduled_alerts
     (user_email, overall_question, alert_frequency)
   VALUES
     (:user_email, :overall_question, :alert_frequency);
@@ -98,9 +107,9 @@ $$;
 **Step 3: Grant permissions**
 
 ```sql
--- Grant to your agent's role
-GRANT USAGE ON PROCEDURE snowscience.streamlit_apps.log_snowflake_intelligence_scheduled_alert(STRING, STRING, STRING) 
-  TO ROLE YOUR_AGENT_ROLE; --make sure to grant usage to the roles that people use for your agent as well!
+-- Grant to your agent's role (update YOUR_AGENT_ROLE)
+GRANT USAGE ON PROCEDURE log_snowflake_intelligence_scheduled_alert(STRING, STRING, STRING) 
+  TO ROLE YOUR_AGENT_ROLE; --you will need to make sure your end user has all the necessary access to databases and schemas as well
 ```
 
 **Step 4: Add to your Snowflake Intelligence agent**
@@ -117,7 +126,110 @@ Agent: [Uses tool to create subscription]
        ✅ "You've been subscribed! You'll receive daily updates at 8am PST."
 ```
 
-### Part 2: Automated Processing 
+**Step 5: (Optional) Add Alert Management Tools**
+
+To let users view and delete their alerts through the agent, the `schedule_analysis.sql` file already includes these procedures (Step 3 in that file):
+
+- **`view_alerts_by_user`** - Returns JSON array of user's active alerts
+- **`drop_alerts_by_user`** - Deletes a specific alert for a user
+
+These are already created when you run `schedule_analysis.sql`. Just make sure to grant permissions:
+
+**Grant permissions:**
+```sql
+GRANT USAGE ON PROCEDURE view_alerts_by_user(STRING) 
+  TO ROLE YOUR_AGENT_ROLE;
+
+GRANT USAGE ON PROCEDURE drop_alerts_by_user(STRING, STRING) 
+  TO ROLE YOUR_AGENT_ROLE;
+```
+
+**Add to your agent as custom tools:**
+
+| Tool | Parameters | Description |
+|------|------------|-------------|
+| `view_alerts_by_user` | `p_user_email` (STRING) | Returns JSON array of user's active alerts. Use when user asks "What alerts do I have?" or "Show my subscriptions" |
+| `drop_alerts_by_user` | `user_email` (STRING), `overall_question` (STRING) | Deletes a specific alert. Use when user asks to "unsubscribe" or "cancel" an alert |
+
+**Usage examples:**
+```
+User: "What alerts do I have subscribed to?"
+Agent: [Uses view_alerts_by_user] 
+       "You have 2 active alerts:
+       1. Daily updates on Streamlit usage (Daily)
+       2. Weekly customer report (Weekly)"
+
+User: "Unsubscribe me from the daily Streamlit updates"
+Agent: [Uses drop_alerts_by_user] 
+       ✅ "You've been unsubscribed from that alert."
+```
+
+### Part 2: Email Procedure Setup
+
+This creates the stored procedure for sending formatted HTML emails.
+
+**Step 1: Create an email integration (if you don't have one)**
+
+```sql
+CREATE NOTIFICATION INTEGRATION IF NOT EXISTS EXISTING_EMAIL_INTEGRATION
+  TYPE=EMAIL
+  ENABLED=TRUE;
+```
+
+**Step 2: Create the email stored procedure**
+
+Run the SQL from `email_procedure.sql`:
+
+```sql
+CREATE OR REPLACE PROCEDURE snowscience.streamlit_apps.standalone_email_formatted(
+  recipient STRING,
+  subject STRING,
+  raw_html STRING
+)
+RETURNS STRING
+LANGUAGE PYTHON
+RUNTIME_VERSION=3.13
+PACKAGES = ('snowflake-snowpark-python', 'premailer')
+ARTIFACT_REPOSITORY = snowflake.snowpark.pypi_shared_repository
+HANDLER = 'send_formatted_email'
+EXECUTE AS CALLER
+AS
+$$
+import premailer
+
+INTEGRATION_NAME = "EXISTING_EMAIL_INTEGRATION"  -- Update this to your integration name
+
+def send_formatted_email(session, recipient: str, subject: str, raw_html: str) -> str:
+    """Inline CSS with premailer, then send HTML email via system$send_email."""
+    try:
+        formatted_html = premailer.transform(raw_html)
+        session.call(
+            'system$send_email',
+            INTEGRATION_NAME,
+            recipient,
+            subject,
+            formatted_html,
+            'text/html',
+        )
+        return f"Email sent to {recipient}"
+    except Exception as e:
+        return f"Failed to send email: {type(e).__name__}: {e}"
+$$;
+```
+
+**Important:** Update `INTEGRATION_NAME` in the procedure to match your email integration name.
+
+**Step 3: Test the email procedure**
+
+```sql
+CALL snowscience.streamlit_apps.standalone_email_formatted(
+    'your.email@company.com',
+    'Test Email',
+    '<html><body><h1>Hello!</h1><p>This is a test email.</p></body></html>'
+);
+```
+
+### Part 3: Automated Processing 
 
 This adds the automated email delivery system. The included `snowflake_intelligence_alerts.py` file contains the main processing logic.
 
@@ -129,12 +241,12 @@ This adds the automated email delivery system. The included `snowflake_intellige
 
 **Step 1: Configure the script**
 
-Update these configuration values in `snowflake_intelligence_alerts.py`:
+Update these configuration values at the top of `snowflake_intelligence_alerts.py`:
 
 ```python
 # Update these for your environment
-ALERTS_TABLE = "your_db.your_schema.snowflake_intelligence_scheduled_alerts"
-EMAIL_PROC = "your_db.your_schema.your_email_procedure"
+TARGET_DATABASE = "YOUR_DATABASE"        # e.g., "snowscience"
+TARGET_SCHEMA = "YOUR_SCHEMA"            # e.g., "streamlit_apps"
 ADMIN_EMAILS = ["your.email@company.com"]
 
 # For testing, enable preview mode
@@ -166,37 +278,38 @@ This will:
 Once testing is complete:
 
 1. Set `PREVIEW_MODE = False` in the script
-2. Deploy to your scheduler (Airflow, cron, etc.)
+2. Deploy to wherever you schedule python scripts today (we use Airflow)
 3. Schedule to run daily at your preferred time (we use 8am PST)
 
-## Usage Examples
 
-### Example: Daily Product Metrics
+## Monitoring
 
-```
-User: "Show me how many new agents were created yesterday"
-Agent: [Provides analysis]
-User: "Can I get this every morning?"
-Agent: "I'll set up a daily alert for you. You'll receive this analysis 
-       every morning at 8am PST."
-```
+### Admin Reports
 
-**Email delivered next day:**
-```
-Subject: Snowflake Intelligence Alert: How many new agents...
+After each run, admins receive a summary email:
+- Total alerts processed
+- Success/failure counts
+- Detailed results table with any errors
+- Timestamps and performance metrics
 
-## Executive Summary
-Yesterday saw 23 new agents created across 15 companies, representing 
-a 15% increase from the previous Tuesday average...
 
-## Key Insights
-- Top creator: john@acme.com created 5 new agents
-- Most popular type: RAG agents (45% of new agents)
-- New milestone: TechStart Inc created their first production agent
-...
-```
+## Code References
 
+The full implementation is available in this repository:
+
+- **Custom Tools**: `schedule_analysis.sql` - Subscription creation, viewing, and deletion tools
+- **Email Procedure**: `email_procedure.sql` - HTML email sending with CSS inlining
+- **Python Script**: `snowflake_intelligence_alerts.py` - Automated processing script
+- **Airflow DAG**: `snowflake_intelligence_alerts_DAG.py` - Scheduling example
+
+## Resources
+
+- **Cortex Agent API**: [Documentation](https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agent-api)
+- **Snowflake Intelligence**: [Documentation](https://docs.snowflake.com/en/user-guide/snowflake-intelligence)
+- **Email Integration**: [Documentation](https://docs.snowflake.com/en/user-guide/email-stored-procedures)
+---
 
 **Happy scheduling!** 🚀
+
 
 

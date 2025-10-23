@@ -50,10 +50,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Configuration
-ALERTS_TABLE = "snowscience.streamlit_apps.snowflake_intelligence_scheduled_alerts"
-EMAIL_PROC = "snowscience.streamlit_apps._preview__send_formatted_email"
-ADMIN_EMAILS = ["zachary.blackwood@snowflake.com", "tyler.richards@snowflake.com"]
+# =============================================================================
+# CONFIGURATION - Update these for your environment
+# =============================================================================
+TARGET_DATABASE = "YOUR_DATABASE"        # e.g., "snowscience"
+TARGET_SCHEMA = "YOUR_SCHEMA"            # e.g., "streamlit_apps"
+ADMIN_EMAILS = ["your.email@company.com"]
+
+# Derived configuration (no need to change these)
+ALERTS_TABLE = f"{TARGET_DATABASE}.{TARGET_SCHEMA}.snowflake_intelligence_scheduled_alerts"
+EMAIL_PROC = f"{TARGET_DATABASE}.{TARGET_SCHEMA}.standalone_email_formatted"
 DEFAULT_SUBJECT = "Snowflake Intelligence Alert: {question}"
 
 # Preview mode settings (set to True for local testing)
